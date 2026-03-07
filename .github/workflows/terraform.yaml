@@ -31,15 +31,14 @@ jobs:
         run: terraform validate
 
       - name: Terraform Plan
-        run: terraform plan
+        run: terraform plan -no-color
 
       - name: Terraform Apply
         id: apply
         run: |
           set +e
-          terraform apply -auto-approve > terraform.log 2>&1
+          terraform apply -auto-approve -no-color > terraform.log 2>&1
           EXIT_CODE=$?
-          echo "exit_code=$EXIT_CODE" >> $GITHUB_OUTPUT
 
           if [ $EXIT_CODE -ne 0 ]; then
             echo "TERRAFORM_FAILED=true" >> $GITHUB_ENV
@@ -52,9 +51,9 @@ jobs:
       - name: Send Logs to Make.com
         if: env.TERRAFORM_FAILED == 'true'
         run: |
-          LOG_CONTENT=$(head -n 50 terraform.log)
+          ERROR_LOG=$(grep -A 20 "Error:" terraform.log)
 
-          JSON_PAYLOAD=$(jq -n --arg log "$LOG_CONTENT" '{log: $log}')
+          JSON_PAYLOAD=$(jq -n --arg log "$ERROR_LOG" '{log: $log}')
 
           curl -X POST https://hook.eu1.make.com/2rkt5kcllidnsy33kw13y5x6m6ywf7ie \
           -H "Content-Type: application/json" \
