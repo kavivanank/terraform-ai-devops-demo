@@ -36,12 +36,24 @@ jobs:
       - name: Terraform Apply
         id: apply
         run: |
-          terraform apply -auto-approve > terraform.log 2>&1 || echo "TERRAFORM_FAILED=true" >> $GITHUB_ENV
+          set +e
+          terraform apply -auto-approve > terraform.log 2>&1
+          EXIT_CODE=$?
+          echo "exit_code=$EXIT_CODE" >> $GITHUB_OUTPUT
 
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "TERRAFORM_FAILED=true" >> $GITHUB_ENV
+          fi
+
+      - name: Debug Failure Flag
+        run: |
+          echo "Terraform failed flag: $TERRAFORM_FAILED"
+      
       - name: Send Logs to Make.com if Failure
         if: env.TERRAFORM_FAILED == 'true'
         run: |
-          LOG_CONTENT=$(cat terraform.log | sed 's/"/\\"/g')
+          LOG_CONTENT=$(cat terraform.log | head -n 50 | sed 's/"/\\"/g')
+    
           curl -X POST https://hook.eu1.make.com/2rkt5kcllidnsy33kw13y5x6m6ywf7ie \
           -H "Content-Type: application/json" \
           -d "{\"log\":\"$LOG_CONTENT\"}"
