@@ -16,51 +16,23 @@ jobs:
       AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
       TF_VAR_ami_id: ${{ secrets.TF_VAR_ami_id }}
 
-    steps:
-
-      - name: Checkout Repository
-        uses: actions/checkout@v3
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-
-      - name: Terraform Init
-        run: terraform init
-
-      - name: Terraform Validate
-        run: terraform validate
-
-      - name: Terraform Plan
-        run: terraform plan -no-color
-
-      - name: Terraform Apply
-        id: apply
-        run: |
-          set +e
-          terraform apply -auto-approve -no-color > terraform.log 2>&1
-          EXIT_CODE=$?
-
-          if [ $EXIT_CODE -ne 0 ]; then
-            echo "TERRAFORM_FAILED=true" >> $GITHUB_ENV
-          fi
-
-      - name: Debug Failure Flag
-        run: |
-          echo "Terraform failed flag: $TERRAFORM_FAILED"
-      
-      - name: Send Logs to Make.com
-        if: env.TERRAFORM_FAILED == 'true'
-        run: |
-          ERROR_LOG=$(grep -A 20 "Error:" terraform.log)
-
-          JSON_PAYLOAD=$(jq -n --arg log "$ERROR_LOG" '{log: $log}')
-
-          curl -X POST https://hook.eu1.make.com/2rkt5kcllidnsy33kw13y5x6m6ywf7ie \
+    steps: 
+      - name: Checkout 
+        uses: actions/checkout@v3 
+        
+      - name: Setup Terraform 
+        uses: hashicorp/setup-terraform@v3 
+        
+      - name: Terraform Apply 
+        run: | 
+          terraform init 
+          terraform apply -auto-approve 2>&1 | tee output.log 
+        continue-on-error: true 
+        
+      - name: Send Logs to Make 
+        if: always() 
+        run: | 
+          LOG=$(cat output.log | jq -Rs .)
+          curl -X POST ${{ secrets.MAKE_WEBHOOK_URL }} \
           -H "Content-Type: application/json" \
-          -d "$JSON_PAYLOAD"
-
-      - name: Upload Terraform Logs
-        uses: actions/upload-artifact@v4
-        with:
-          name: terraform-log
-          path: terraform.log
+          -d "{\"log\": $LOG}"
