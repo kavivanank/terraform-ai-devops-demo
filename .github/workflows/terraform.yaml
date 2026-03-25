@@ -29,8 +29,9 @@ jobs:
           terraform apply -auto-approve 2>&1 | tee output.log 
         continue-on-error: true 
         
-      - name: Send Logs to Make Webhook
+      - name: Send Logs to Make
         run: |
+          LOG=$(cat terraform/tf_output.log | sed 's/"/\\"/g')
           curl -X POST ${{ secrets.MAKE_WEBHOOK_URL }} \
             -H "Content-Type: application/json" \
-            -d "$(jq -n --arg log "$(cat terraform/tf_output.log)" '{log: $log}')"
+            -d "{\"log\": \"$LOG\"}"
