@@ -31,7 +31,8 @@ jobs:
         
       - name: Send Logs to Make
         run: |
-          LOG=$(cat terraform/tf_output.log | sed 's/"/\\"/g')
+          jq -Rs '{log: .}' terraform/tf_output.log > payload.json
+      
           curl -X POST ${{ secrets.MAKE_WEBHOOK_URL }} \
             -H "Content-Type: application/json" \
-            -d "{\"log\": \"$LOG\"}"
+            -d @payload.json
