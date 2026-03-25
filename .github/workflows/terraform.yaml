@@ -22,17 +22,31 @@ jobs:
         
       - name: Setup Terraform 
         uses: hashicorp/setup-terraform@v3 
+
+      - name: Terraform Init
+        run: terraform init
+        working-directory: terraform/
         
-      - name: Terraform Apply 
-        run: | 
-          terraform init 
-          terraform apply -auto-approve 2>&1 | tee output.log 
-        continue-on-error: true 
-        
+      - name: Terraform Apply
+        run: |
+          terraform apply -auto-approve 2>&1 | tee tf_output.log
+        working-directory: terraform/
+        continue-on-error: true
+
+      # ✅ ADD DEBUG STEP (VERY IMPORTANT)
+      - name: Debug Log File
+        run: |
+          echo "Listing files..."
+          ls -l
+          echo "---- LOG CONTENT ----"
+          cat tf_output.log || echo "No log file found"
+        working-directory: terraform/
+
       - name: Send Logs to Make
         run: |
-          jq -Rs '{log: .}' terraform/tf_output.log > payload.json
-      
-          curl -X POST ${{ secrets.MAKE_WEBHOOK_URL }} \
+          jq -Rs '{log: .}' tf_output.log > payload.json
+
+          curl -X POST "${{ secrets.MAKE_WEBHOOK_URL }}" \
             -H "Content-Type: application/json" \
-            -d @payload.json
+            --data-binary @payload.json
+        working-directory: terraform/
