@@ -34,6 +34,10 @@ jobs:
         working-directory: terraform/
         continue-on-error: true
 
+<<<<<<< HEAD
+=======
+      # ADD DEBUG STEP (VERY IMPORTANT)
+>>>>>>> f8c77e9db1c42182a0235e0b79f8169095967813
       - name: Debug Log File
         run: |
           echo "Listing files..."
