@@ -53,6 +53,7 @@ jobs:
             --sha "${{ github.sha }}" \
             --branch "${{ github.ref_name }}" \
             --run-id "${{ github.run_id }}"
+        working-directory: terraform/
 
       - name: Send Logs to Make
         if: steps.apply.outcome == 'failure'
