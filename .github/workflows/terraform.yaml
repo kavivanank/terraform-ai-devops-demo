@@ -28,12 +28,12 @@ jobs:
         working-directory: terraform/
         
       - name: Terraform Apply
+        id: apply
         run: |
           terraform apply -auto-approve 2>&1 | tee tf_output.log
         working-directory: terraform/
         continue-on-error: true
 
-      # ✅ ADD DEBUG STEP (VERY IMPORTANT)
       - name: Debug Log File
         run: |
           echo "Listing files..."
@@ -42,11 +42,29 @@ jobs:
           cat tf_output.log || echo "No log file found"
         working-directory: terraform/
 
-      - name: Send Logs to Make
+      - name: Extract Errors with Python
+        if: steps.apply.outcome == 'failure'
         run: |
-          jq -Rs '{log: .}' tf_output.log > payload.json
+          python scripts/extract_tf_error.py \
+            --stage apply \
+            --log-file terraform/tf_output.log \
+            --output terraform/payload.json \
+            --repo "${{ github.repository }}" \
+            --sha "${{ github.sha }}" \
+            --branch "${{ github.ref_name }}" \
+            --run-id "${{ github.run_id }}"
+
+      - name: Send Logs to Make
+        if: steps.apply.outcome == 'failure'
+        run: |
+          echo "---- PAYLOAD PREVIEW ----"
+          head -20 payload.json
 
           curl -X POST "${{ secrets.MAKE_WEBHOOK_URL }}" \
             -H "Content-Type: application/json" \
             --data-binary @payload.json
         working-directory: terraform/
+
+      - name: Fail if apply failed
+        if: steps.apply.outcome == 'failure'
+        run: exit 1
