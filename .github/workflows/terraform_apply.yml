@@ -30,20 +30,26 @@ jobs:
       - name: Terraform Apply
         id: apply
         run: |
+          set +e
           terraform apply -auto-approve 2>&1 | tee tf_output.log
+          TF_EXIT=$?
+          echo "tf_exitcode=$TF_EXIT" >> $GITHUB_OUTPUT
+          if [ $TF_EXIT -ne 0 ]; then
+            echo "TF_FAILED=true" >> $GITHUB_ENV
+          fi
+          exit 0
         working-directory: terraform/
-        continue-on-error: true
 
       - name: Debug Log File
         run: |
-          echo "Listing files..."
-          ls -l
+          echo "Terraform exit code: ${{ steps.apply.outputs.tf_exitcode }}"
+          echo "TF_FAILED=${{ env.TF_FAILED }}"
           echo "---- LOG CONTENT ----"
           cat tf_output.log || echo "No log file found"
         working-directory: terraform/
 
       - name: Extract Errors with Python
-        if: steps.apply.outcome == 'failure'
+        if: env.TF_FAILED == 'true'
         run: |
           python scripts/extract_tf_error.py \
             --stage apply \
@@ -53,10 +59,9 @@ jobs:
             --sha "${{ github.sha }}" \
             --branch "${{ github.ref_name }}" \
             --run-id "${{ github.run_id }}"
-        working-directory: terraform/
-
+        
       - name: Send Logs to Make
-        if: steps.apply.outcome == 'failure'
+        if: env.TF_FAILED == 'true'
         run: |
           echo "---- PAYLOAD PREVIEW ----"
           head -20 payload.json
@@ -67,5 +72,5 @@ jobs:
         working-directory: terraform/
 
       - name: Fail if apply failed
-        if: steps.apply.outcome == 'failure'
+        if: env.TF_FAILED == 'true'
         run: exit 1
