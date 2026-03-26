@@ -32,7 +32,7 @@ jobs:
         run: |
           set +e
           terraform apply -auto-approve 2>&1 | tee tf_output.log
-          TF_EXIT=$?
+          TF_EXIT=${PIPESTATUS[0]}
           echo "tf_exitcode=$TF_EXIT" >> $GITHUB_OUTPUT
           if [ $TF_EXIT -ne 0 ]; then
             echo "TF_FAILED=true" >> $GITHUB_ENV
