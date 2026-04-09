@@ -1,15 +1,16 @@
-name: Terraform CI/CD
-
+name: Terraform CI/CD with AI Error Agent
 on:
   push:
     branches:
       - feature/main
+  pull_request:
+    branches:
+      - main
 
 jobs:
   terraform:
     name: Terraform Deploy
     runs-on: ubuntu-latest
-
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -19,16 +20,37 @@ jobs:
     steps: 
       - name: Checkout 
         uses: actions/checkout@v3 
-        
+
       - name: Setup Terraform 
-        uses: hashicorp/setup-terraform@v3 
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false  # Disable wrapper for cleaner output
 
       - name: Terraform Init
         run: terraform init
         working-directory: terraform/
-        
+
+      - name: Terraform Validate
+        run: terraform validate
+        working-directory: terraform/
+
+      - name: Terraform Plan
+        id: plan
+        run: |
+          set +e
+          terraform plan -out=tfplan 2>&1 | tee tf_plan.log
+          PLAN_EXIT=${PIPESTATUS[0]}
+          echo "plan_exitcode=$PLAN_EXIT" >> $GITHUB_OUTPUT
+          if [ $PLAN_EXIT -ne 0 ]; then
+            echo "TF_PLAN_FAILED=true" >> $GITHUB_ENV
+          fi
+          exit 0
+        working-directory: terraform/
+        continue-on-error: true
+
       - name: Terraform Apply
         id: apply
+        if: env.TF_PLAN_FAILED != 'true'
         run: |
           set +e
           terraform apply -auto-approve 2>&1 | tee tf_output.log
@@ -36,30 +58,119 @@ jobs:
           echo "tf_exitcode=$TF_EXIT" >> $GITHUB_OUTPUT
           if [ $TF_EXIT -ne 0 ]; then
             echo "TF_FAILED=true" >> $GITHUB_ENV
+            echo "TF_STAGE=apply" >> $GITHUB_ENV
           fi
           exit 0
         working-directory: terraform/
+        continue-on-error: true
 
-      - name: Debug Log File
+      - name: Get Terraform Version
+        if: env.TF_FAILED == 'true' || env.TF_PLAN_FAILED == 'true'
+        id: tf_version
         run: |
-          echo "Terraform exit code: ${{ steps.apply.outputs.tf_exitcode }}"
-          echo "TF_FAILED=${{ env.TF_FAILED }}"
-          echo "---- LOG CONTENT ----"
-          cat tf_output.log || echo "No log file found"
+          TF_VER=$(terraform version -json | jq -r '.terraform_version')
+          echo "version=$TF_VER" >> $GITHUB_OUTPUT
         working-directory: terraform/
 
-        
-      - name: Send Logs to Make
-        if: env.TF_FAILED == 'true'
+      - name: Prepare AI Error Agent Payload
+        if: env.TF_FAILED == 'true' || env.TF_PLAN_FAILED == 'true'
         run: |
-          echo "---- PAYLOAD PREVIEW ----"
-          head -20 payload.json
+          # Determine which log to send and stage
+          if [ "${{ env.TF_PLAN_FAILED }}" == "true" ]; then
+            LOG_FILE="tf_plan.log"
+            STAGE="plan"
+          else
+            LOG_FILE="tf_output.log"
+            STAGE="apply"
+          fi
 
-          curl -X POST "${{ secrets.MAKE_WEBHOOK_URL }}" \
+          # Read the log file and escape for JSON
+          TERRAFORM_LOG=$(cat "$LOG_FILE" | jq -Rs .)
+
+          # Extract PR number if available
+          PR_NUMBER="null"
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            PR_NUMBER="${{ github.event.pull_request.number }}"
+          fi
+
+          # Build the JSON payload matching n8n workflow expectations
+          cat > payload.json <<EOF
+          {
+            "terraform_log": $TERRAFORM_LOG,
+            "repository": "${{ github.repository }}",
+            "branch": "${{ github.ref_name }}",
+            "commit_sha": "${{ github.sha }}",
+            "pr_number": $PR_NUMBER,
+            "run_id": "${{ github.run_id }}",
+            "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+            "triggered_by": "${{ github.actor }}",
+            "workspace": "default",
+            "terraform_version": "${{ steps.tf_version.outputs.version }}",
+            "stage": "$STAGE"
+          }
+          EOF
+
+          echo "✅ Payload prepared for AI Error Agent"
+          echo "📊 Stage: $STAGE"
+          echo "📝 Log size: $(wc -l < "$LOG_FILE") lines"
+        working-directory: terraform/
+
+      - name: Debug Payload Preview
+        if: env.TF_FAILED == 'true' || env.TF_PLAN_FAILED == 'true'
+        run: |
+          echo "========================================="
+          echo "🔍 PAYLOAD PREVIEW (first 30 lines)"
+          echo "========================================="
+          head -30 payload.json
+          echo ""
+          echo "========================================="
+          echo "📦 Full payload size: $(wc -c < payload.json) bytes"
+          echo "========================================="
+        working-directory: terraform/
+
+      - name: Send to n8n AI Error Agent
+        if: env.TF_FAILED == 'true' || env.TF_PLAN_FAILED == 'true'
+        run: |
+          echo "🤖 Sending to Terraform AI Error Agent..."
+
+          # Send to n8n webhook endpoint
+          # The webhook path should match: /terraform-error-agent
+          HTTP_RESPONSE=$(curl -X POST "${{ secrets.N8N_WEBHOOK_URL }}" \
             -H "Content-Type: application/json" \
-            --data-binary @payload.json
-        working-directory: terraform/
+            --data-binary @payload.json \
+            -w "\n%{http_code}" \
+            -s)
 
-      - name: Fail if apply failed
-        if: env.TF_FAILED == 'true'
-        run: exit 1
+          HTTP_CODE=$(echo "$HTTP_RESPONSE" | tail -n1)
+
+          if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 201 ]; then
+            echo "✅ Successfully sent to AI Error Agent"
+            echo "📧 AI analysis and email notification will be sent shortly"
+          else
+            echo "⚠️  Warning: Webhook returned HTTP $HTTP_CODE"
+            echo "Response: $(echo "$HTTP_RESPONSE" | head -n-1)"
+          fi
+        working-directory: terraform/
+        continue-on-error: true  # Don't fail the job if webhook fails
+
+      - name: Upload Logs as Artifact
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: terraform-logs
+          path: |
+            terraform/tf_output.log
+            terraform/tf_plan.log
+            terraform/payload.json
+          retention-days: 30
+
+      - name: Fail Job if Terraform Failed
+        if: env.TF_FAILED == 'true' || env.TF_PLAN_FAILED == 'true'
+        run: |
+          if [ "${{ env.TF_PLAN_FAILED }}" == "true" ]; then
+            echo "❌ Terraform Plan failed - check AI analysis email for diagnosis"
+            exit 1
+          else
+            echo "❌ Terraform Apply failed - check AI analysis email for diagnosis"
+            exit 1
+          fi
