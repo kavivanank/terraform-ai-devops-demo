@@ -1,4 +1,1 @@
 #terraform-ai-devops-demo
-
-
-
