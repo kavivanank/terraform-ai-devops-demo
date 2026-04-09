@@ -48,17 +48,6 @@ jobs:
           cat tf_output.log || echo "No log file found"
         working-directory: terraform/
 
-      - name: Extract Errors with Python
-        if: env.TF_FAILED == 'true'
-        run: |
-          python scripts/extract_tf_error.py \
-            --stage apply \
-            --log-file terraform/tf_output.log \
-            --output terraform/payload.json \
-            --repo "${{ github.repository }}" \
-            --sha "${{ github.sha }}" \
-            --branch "${{ github.ref_name }}" \
-            --run-id "${{ github.run_id }}"
         
       - name: Send Logs to Make
         if: env.TF_FAILED == 'true'
