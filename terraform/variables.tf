@@ -3,7 +3,7 @@ variable "aws_region" {
 }
 
 variable "instance_type" {
-  default = "m10.large"
+  default = "m.large"
 }
 
 variable "ami_id" {
